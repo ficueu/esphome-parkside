@@ -1,0 +1,106 @@
+esphome:
+  name: parkside-reader
+  friendly_name: Parkside reader
+
+esp32:
+  board: esp32dev          # zmień na swoją płytkę
+  framework:
+    type: esp-idf
+
+external_components:
+  - source: github://ficueu/esphome-parkside@main
+    components: [parkside_bus]
+
+logger:
+  level: DEBUG             # każda ramka w logu: bajty hex + surowe czasy w us
+
+api:
+
+ota:
+  - platform: esphome
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+# ---------------------------------------------------------------------------
+# Linia CS ("ID" w ładowarce) - dane z baterii do ładowarki.
+# Ramka: 40 bitów po 1 ms, MSB first, bajt 0 = 0x00, potem ~200 ms ciszy.
+#   00 88 33 44 77  -> żądanie ładowania (bateria 2 Ah, np. PAP 20 A1)
+#   00 88 CC 44 77  -> żądanie ładowania (PAPS 204 A1)
+#   00 88 xx 22 CF  -> naładowana
+#
+# Podłączenie:
+#   bateria P-  -> GND ESP i GND konwertera
+#   bateria CS  -> strona 5 V konwertera (pull-up do 5 V udaje ładowarkę, ta ma ~7 kOhm)
+#   strona 3,3 V konwertera -> GPIO4
+# ---------------------------------------------------------------------------
+parkside_bus:
+  - id: bus_cs
+    pin:
+      number: GPIO4
+      mode:
+        input: true
+        pullup: false      # pull-up daje konwerter
+    bit_time: 1ms
+    frame_bits: 40
+    frame_gap: 100ms
+    glitch_filter: 200us
+    status_timeout: 1s
+    frame:
+      name: "CS ramka"
+    frame_us:
+      name: "CS ramka us"
+      disabled_by_default: true
+    status:
+      name: "CS status"
+    frame_interval:
+      name: "CS okres ramek"
+      filters:
+        - throttle_average: 10s
+    on_frame:
+      - lambda: |-
+          // x: std::vector<uint8_t>, 5 bajtów. Bajt 2 różni się między bateriami
+          // (0x33 vs 0xCC), bajty 3-4 to stan (44 77 = ładuj, 22 CF = pełna).
+          static uint8_t last_b2 = 0;
+          if (x[2] != last_b2) {
+            last_b2 = x[2];
+            ESP_LOGI("cs", "Bajt 2 (typ baterii?) = 0x%02X", x[2]);
+          }
+
+# ---------------------------------------------------------------------------
+# Linia T (temperatura + alarm BMS dla narzędzia), wg positron96:
+#   bateria OK     -> T ściągnięte do GND przez ~10k (NTC + tranzystor)
+#   rozładowana/OC -> T puszczone (pływa), próg ok. 13 V na pakiecie
+#   w normalnej pracy bateria puszcza T na ułamek sekundy kilka razy na sekundę,
+#   więc alarm dopiero po ~1 s ciągłego stanu wysokiego.
+#
+# Podłączenie (jak w narzędziu: 10k do 5 V, przy OK wychodzi ~2,5 V):
+#   5 V -> 10k -> T;  T -> 100k -> GPIO34 -> 100k -> GND
+#   OK: ~2,4 V na T (1,2 V na ADC), usterka: ~4,8 V na T (2,4 V na ADC)
+# ---------------------------------------------------------------------------
+sensor:
+  - platform: adc
+    id: t_line_v
+    pin: GPIO34
+    attenuation: 12db
+    update_interval: 100ms
+    internal: true
+    filters:
+      - multiply: 2.0      # dzielnik 100k/100k
+
+  - platform: template
+    name: "T napięcie"
+    unit_of_measurement: V
+    accuracy_decimals: 2
+    lambda: return id(t_line_v).state;
+    update_interval: 10s
+
+binary_sensor:
+  - platform: template
+    name: "T alarm BMS"
+    device_class: problem
+    lambda: return id(t_line_v).state > 3.6;
+    filters:
+      - delayed_on: 1s     # ignoruje cykliczne krótkie puszczanie linii
+      - delayed_off: 300ms
