@@ -6,6 +6,7 @@ from esphome.const import (
     CONF_ID,
     CONF_PIN,
     CONF_TRIGGER_ID,
+    ENTITY_CATEGORY_DIAGNOSTIC,
     ICON_TIMER,
     STATE_CLASS_MEASUREMENT,
     UNIT_MILLISECOND,
@@ -20,6 +21,8 @@ CONF_GLITCH_FILTER = "glitch_filter"
 CONF_STATUS_TIMEOUT = "status_timeout"
 CONF_BIT_TIME = "bit_time"
 CONF_FRAME_BITS = "frame_bits"
+CONF_AUTO_BIT_TIME = "auto_bit_time"
+CONF_MEASURED_BIT_TIME = "measured_bit_time"
 CONF_FRAME = "frame"
 CONF_FRAME_US = "frame_us"
 CONF_STATUS = "status"
@@ -56,8 +59,10 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(
             CONF_STATUS_TIMEOUT, default="1s"
         ): cv.positive_time_period_milliseconds,
-        # czas bitu (1 ms wg Aifryz/parkside-battery-hack i hackaday)
+        # nominalny czas bitu (1 ms wg Aifryz/hackaday; zmierzone 0,96-1,005 ms)
         cv.Optional(CONF_BIT_TIME, default="1ms"): cv.positive_time_period_microseconds,
+        # dopasuj czas bitu do zegara konkretnej baterii (estymata z każdej ramki)
+        cv.Optional(CONF_AUTO_BIT_TIME, default=True): cv.boolean,
         # długość ramki w bitach (40 = 5 bajtów, MSB first)
         cv.Optional(CONF_FRAME_BITS, default=40): _validate_frame_bits,
         cv.Optional(CONF_FRAME): text_sensor.text_sensor_schema(icon="mdi:code-array"),
@@ -72,6 +77,13 @@ CONFIG_SCHEMA = cv.Schema(
             icon=ICON_TIMER,
             accuracy_decimals=1,
             state_class=STATE_CLASS_MEASUREMENT,
+        ),
+        cv.Optional(CONF_MEASURED_BIT_TIME): sensor.sensor_schema(
+            unit_of_measurement="µs",
+            icon=ICON_TIMER,
+            accuracy_decimals=1,
+            state_class=STATE_CLASS_MEASUREMENT,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
         ),
         cv.Optional(CONF_ON_FRAME): automation.validate_automation(
             {
@@ -93,6 +105,7 @@ async def to_code(config):
     cg.add(var.set_status_timeout(config[CONF_STATUS_TIMEOUT]))
     cg.add(var.set_bit_time(config[CONF_BIT_TIME]))
     cg.add(var.set_frame_bits(config[CONF_FRAME_BITS]))
+    cg.add(var.set_auto_bit_time(config[CONF_AUTO_BIT_TIME]))
 
     if CONF_FRAME in config:
         sens = await text_sensor.new_text_sensor(config[CONF_FRAME])
@@ -106,6 +119,9 @@ async def to_code(config):
     if CONF_FRAME_INTERVAL in config:
         sens = await sensor.new_sensor(config[CONF_FRAME_INTERVAL])
         cg.add(var.set_frame_interval_sensor(sens))
+    if CONF_MEASURED_BIT_TIME in config:
+        sens = await sensor.new_sensor(config[CONF_MEASURED_BIT_TIME])
+        cg.add(var.set_measured_bit_time_sensor(sens))
 
     for conf in config.get(CONF_ON_FRAME, []):
         trigger = cg.new_Pvariable(conf[CONF_TRIGGER_ID], var)

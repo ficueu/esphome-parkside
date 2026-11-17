@@ -33,21 +33,44 @@ Pull-up do 5 V po stronie baterii udaje ładowarkę (ładowarka ma ok. 7 kΩ do 
 | Parametr | Wartość |
 |---|---|
 | Fizycznie | otwarty dren po stronie baterii, pull-up 5 V po stronie ładowarki, spoczynek = stan wysoki |
-| Kodowanie | NRZ, 1 ms na bit, MSB first |
-| Ramka | 40 bitów = 5 bajtów, bajt 0 = `0x00` (preambuła, 8 ms w dole) |
-| Przerwa | ok. 200 ms w stanie wysokim, okres ramek ok. 240 ms |
+| Kodowanie | NRZ, MSB first, bit nominalnie 1 ms (zmierzone 0,96–1,005 ms zależnie od baterii) |
+| Ramka | 40 bitów = 5 bajtów, bajt 0 = `0x00` (preambuła, 8 bitów w dole) |
+| Przerwa | ok. 203 bity w stanie wysokim, okres ramek 241–243 bity (233–242 ms) |
+| Kierunek | tylko bateria → ładowarka, ładowarka nic nie odpowiada |
+
+Zmierzone parametry (ESP32, `parkside_bus`):
+
+| Bateria | Czas bitu | Okres ramek | Jitter zboczy |
+|---|---|---|---|
+| PAP 20 B1 2 Ah | 960,6 µs | 233,3 ms (242,9 bitu) | σ 14 µs, maks. 46 µs |
+| PAP 20 B3 4 Ah (uszkodzona) | 994,6 µs | 241,6 ms (243,0 bitu) | – |
+| PAPS 204 A1 4 Ah Smart | 1004,8 µs | 242,2 ms (241,0 bitu) | – |
+
+Zegar różni się między bateriami o kilka procent, dlatego dekoder domyślnie dopasowuje czas bitu
+(`auto_bit_time`) z krótkich odcinków każdej ramki i pamięta go między ramkami.
 
 Znane ramki:
 
-| Ramka | Znaczenie | Źródło |
+| Ramka | Znaczenie | Bateria / źródło |
 |---|---|---|
-| `00 88 33 44 77` | żądanie ładowania, bateria 2 Ah (PAP 20 A1) | Aifryz, hackaday |
-| `00 88 CC 44 77` | żądanie ładowania, PAPS 204 A1 | hackaday |
-| `00 88 33 22 CF` | naładowana, bateria 2 Ah | pomiar własny |
-| `00 88 CC 22 CF` | naładowana, PAPS 204 A1 | hackaday |
+| `00 88 33 44 77` | żądanie ładowania | PAP 20 A1 2 Ah (Aifryz), PAP 20 B1 2 Ah (pomiar) |
+| `00 88 33 22 CF` | pełna – ładowarka przerywa ładowanie | PAP 20 B1 2 Ah (pomiar) |
+| `00 88 CC 44 77` | żądanie ładowania | PAPS 204 A1 4 Ah (hackaday, pomiar) |
+| `00 88 CC 22 CF` | pełna | PAPS 204 A1 4 Ah (hackaday, pomiar) |
+| `00 88 CC 11 C3` | błąd? – 2 pierwsze ramki po wybudzeniu | PAP 20 B3 4 Ah, uszkodzona (nie ładuje, nie zasila) |
+| `00 88 CC 06 3C` | błąd? – potem nadawana stale | jw. |
 
-Interpretacja bajtów (hipotezy, niepotwierdzone): bajt 1 stały, bajt 2 zależy od typu baterii (być może klasa prądu ładowania), bajty 3–4 to stan.
-Jeśli masz inne baterie (4 Ah bez Smart, 8 Ah, 12 Ah, nowa generacja PAP 202/204) – ramki z logu mile widziane w issues.
+Interpretacja bajtów:
+
+| Bajt | Wartości | Hipoteza |
+|---|---|---|
+| 0 | `00` | preambuła |
+| 1 | `88` | stały we wszystkich zebranych ramkach |
+| 2 | `33` / `CC` | klasa baterii: `33` = 2 Ah, `CC` = 4 Ah (potwierdzone na 2+2 bateriach różnych generacji); być może prąd ładowania |
+| 3 | `44`, `22`, `11`, `06` | stan; `44`/`22`/`11` to jeden bit w półbajcie powtórzonym dwa razy (0100, 0010, 0001), `06` łamie ten schemat |
+| 4 | `77`, `CF`, `C3`, `3C` | zawsze w parze z bajtem 3 (`44↔77`, `22↔CF`, `11↔C3`, `06↔3C`), nie zależy od bajtu 2; nie pasuje do prostej sumy/XOR |
+
+Jeśli masz inne baterie (8 Ah, 12 Ah, nowa generacja PAP 202/204, inne usterki) – ramki z logu mile widziane w issues.
 
 ## Linia T
 
@@ -60,7 +83,8 @@ W normalnej pracy MCU baterii kilka razy na sekundę puszcza T na ułamek sekund
 parkside_bus:
   - id: bus_cs
     pin: GPIO4
-    bit_time: 1ms          # czas bitu
+    bit_time: 1ms          # nominalny czas bitu
+    auto_bit_time: true    # dopasowanie do zegara baterii (domyślnie włączone)
     frame_bits: 40         # długość ramki (wielokrotność 8, max 64)
     frame_gap: 100ms       # cisza zamykająca ramkę
     glitch_filter: 200us   # szpilki krótsze niż to są usuwane
@@ -73,6 +97,8 @@ parkside_bus:
       name: "CS status"
     frame_interval:        # sensor, okres ramek w ms
       name: "CS okres ramek"
+    measured_bit_time:     # sensor diagnostyczny, zmierzony czas bitu w µs
+      name: "CS czas bitu"
     on_frame:              # x = std::vector<uint8_t> (5 bajtów)
       - lambda: 'ESP_LOGI("cs", "bajt2=0x%02X", x[2]);'
 ```
@@ -82,7 +108,7 @@ Wartości `status`:
 | Status | Znaczenie |
 |---|---|
 | `charge_request` | bajty 3–4 = `44 77` |
-| `charge_done` | bajty 3–4 = `22 CF` |
+| `charge_done` | bajty 3–4 = `22 CF` (pełna, ładowarka przerywa) |
 | `unknown_frame` | poprawna ramka, nieznana treść |
 | `invalid_frame` | nie da się zdekodować (nieparzysta liczba zboczy, brak preambuły, za długa) |
 | `idle_high` | brak ramek, linia w górze – MCU baterii milczy |
@@ -94,9 +120,17 @@ Kolejne instancje (`MULTI_CONF`) pozwalają podglądać kilka linii naraz.
 
 ## Stan
 
-- Konfiguracja przechodzi `esphome config`, firmware kompiluje się dla ESP32 (ESP-IDF, ESPHome 2026.10).
-- Dekoder przetestowany poza urządzeniem na syntetycznych ramkach: 100% przy dryfcie zegara baterii ±3% i jitterze zboczy do ±100 µs.
-- Na prawdziwej baterii jeszcze nieprzetestowane.
+- Przetestowane na prawdziwych bateriach: PAP 20 B1 2 Ah, PAPS 204 A1 4 Ah Smart, PAP 20 B3 4 Ah (uszkodzona) – wszystkie ramki zdekodowane.
+- Dekoder (`frame_decoder.h`, bez zależności od ESPHome) przetestowany na PC na 64 zarejestrowanych ramkach (64/64)
+  oraz na syntetycznych ramkach z odcinkami do 22 bitów: 100% przy zegarze baterii od −8% do +8% i jitterze ±50 µs.
+- Firmware kompiluje się dla ESP32 (ESP-IDF, ESPHome 2026.10).
+
+Test dekodera na PC (zarejestrowane ramki w `tests/captured_frames.txt`, format `ramka hex|odcinki w us`):
+
+```sh
+g++ -std=c++17 -I components/parkside_bus -o /tmp/test_decoder tests/test_decoder.cpp
+/tmp/test_decoder tests/captured_frames.txt
+```
 
 ## Źródła
 

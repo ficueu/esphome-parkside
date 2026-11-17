@@ -62,8 +62,10 @@ void ParksideBus::loop() {
   if (count > 0)
     this->process_frame_(edges, count, overflow);
 
-  if (millis() - this->last_frame_ms_ > this->status_timeout_ms_)
+  if (millis() - this->last_frame_ms_ > this->status_timeout_ms_) {
     this->set_status_(this->pin_->digital_read() ? STATUS_IDLE_HIGH : STATUS_LINE_LOW);
+    this->bit_time_est_us_ = 0.0f;  // brak ramek -> pewnie inna bateria, kalibracja od nowa
+  }
 }
 
 void ParksideBus::process_frame_(const uint32_t *edges, uint8_t count, bool overflow) {
@@ -72,63 +74,37 @@ void ParksideBus::process_frame_(const uint32_t *edges, uint8_t count, bool over
     return;
   }
 
-  // Surowe czasy (us) do diagnostyki.
+  // Odcinki (us) między zboczami: naprzemiennie dół/góra, zaczynając od dołu.
+  uint32_t runs[MAX_EDGES];
+  const uint8_t nruns = count - 1;
   std::string us_str;
   char buf[12];
-  for (uint8_t i = 1; i < count; i++) {
-    if (i > 1)
+  for (uint8_t i = 0; i < nruns; i++) {
+    runs[i] = edges[i + 1] - edges[i];
+    if (i > 0)
       us_str += ',';
-    snprintf(buf, sizeof(buf), "%" PRIu32, edges[i] - edges[i - 1]);
+    snprintf(buf, sizeof(buf), "%" PRIu32, runs[i]);
     us_str += buf;
   }
 
-  // Dekodowanie: odcinki naprzemiennie dół/góra, zaczynając od dołu (spoczynek = góra,
-  // ramka zaczyna się zboczem opadającym i kończy narastającym -> parzysta liczba zboczy).
-  // Długość odcinka / czas bitu = liczba bitów. Ostatni odcinek w górze zlewa się z ciszą,
-  // więc ramkę dopełniamy jedynkami do frame_bits_.
-  bool valid = !overflow && (count % 2) == 0;
-  const char *reason = overflow ? "przepełnienie bufora" : ((count % 2) ? "nieparzysta liczba zboczy" : nullptr);
-  uint64_t acc = 0;
-  uint16_t nbits = 0;
-  uint8_t level = 0;
-  for (uint8_t i = 1; i < count && valid; i++) {
-    const uint32_t dt = edges[i] - edges[i - 1];
-    const uint32_t n = (dt + this->bit_time_us_ / 2) / this->bit_time_us_;
-    if (n == 0) {
-      valid = false;
-      reason = "odcinek krótszy niż pół bitu";
-      break;
-    }
-    for (uint32_t k = 0; k < n; k++) {
-      if (nbits < this->frame_bits_)
-        acc = (acc << 1) | level;
-      nbits++;
-    }
-    level ^= 1;
+  const DecodeResult res = decode_frame(runs, nruns, this->bit_time_est_us_, this->bit_time_us_, this->frame_bits_,
+                                        this->auto_bit_time_);
+  const bool valid = !overflow && res.error == DecodeError::NONE;
+  if (valid && this->auto_bit_time_) {
+    // Zegar baterii jest stabilny (±0,2% między ramkami), więc uśredniamy po ramkach.
+    this->bit_time_est_us_ = this->bit_time_est_us_ > 0.0f
+                                 ? 0.8f * this->bit_time_est_us_ + 0.2f * res.bit_time_us
+                                 : res.bit_time_us;
   }
-  if (valid && nbits > this->frame_bits_) {
-    valid = false;
-    reason = "ramka dłuższa niż frame_bits";
-  }
+  const char *reason = overflow ? "przepełnienie bufora" : decode_error_str(res.error);
 
   std::vector<uint8_t> bytes;
   std::string hex;
   if (valid) {
-    while (nbits < this->frame_bits_) {
-      acc = (acc << 1) | 1;
-      nbits++;
-    }
-    const uint8_t nbytes = this->frame_bits_ / 8;
-    bytes.reserve(nbytes);
-    for (uint8_t j = 0; j < nbytes; j++) {
-      const uint8_t b = (acc >> (this->frame_bits_ - 8 * (j + 1))) & 0xFF;
-      bytes.push_back(b);
-      snprintf(buf, sizeof(buf), j ? " %02X" : "%02X", b);
+    bytes.assign(res.bytes, res.bytes + res.nbytes);
+    for (uint8_t j = 0; j < res.nbytes; j++) {
+      snprintf(buf, sizeof(buf), j ? " %02X" : "%02X", res.bytes[j]);
       hex += buf;
-    }
-    if (bytes[0] != 0x00) {
-      valid = false;
-      reason = "brak preambuły 0x00";
     }
   }
 
@@ -150,7 +126,11 @@ void ParksideBus::process_frame_(const uint32_t *edges, uint8_t count, bool over
     return;
   }
 
-  ESP_LOGD(TAG, "Ramka [%s] co %.1f ms, us: [%s]", hex.c_str(), interval_ms, us_str.c_str());
+  ESP_LOGD(TAG, "Ramka [%s] co %.1f ms, bit %.1f us, us: [%s]", hex.c_str(), interval_ms, res.bit_time_us,
+           us_str.c_str());
+
+  if (this->bit_time_s_ != nullptr)
+    this->bit_time_s_->publish_state(res.bit_time_us);
 
   // Do HA tylko przy zmianie treści, żeby nie zalewać recordera ramką co ~240 ms.
   if (hex != this->last_frame_str_) {
@@ -161,7 +141,8 @@ void ParksideBus::process_frame_(const uint32_t *edges, uint8_t count, bool over
       this->frame_us_ts_->publish_state(us_str);
   }
 
-  // Znane ramki (bajt 2 to 0x33 lub 0xCC zależnie od baterii, nie wpływa na status).
+  // Znane ramki (bajt 2 = 0x33 dla 2 Ah, 0xCC dla 4 Ah; nie wpływa na status).
+  // 44 77 = bateria chce ładowania, 22 CF = pełna, ładowarka przerywa.
   if (bytes.size() >= 5 && bytes[3] == 0x44 && bytes[4] == 0x77) {
     this->set_status_(STATUS_CHARGE_REQUEST);
   } else if (bytes.size() >= 5 && bytes[3] == 0x22 && bytes[4] == 0xCF) {
@@ -185,7 +166,8 @@ void ParksideBus::set_status_(const char *status) {
 void ParksideBus::dump_config() {
   ESP_LOGCONFIG(TAG, "Parkside bus reader:");
   LOG_PIN("  Pin: ", this->pin_);
-  ESP_LOGCONFIG(TAG, "  Bit time: %" PRIu32 " us, frame: %u bits", this->bit_time_us_, this->frame_bits_);
+  ESP_LOGCONFIG(TAG, "  Bit time: %" PRIu32 " us (auto: %s), frame: %u bits", this->bit_time_us_,
+                YESNO(this->auto_bit_time_), this->frame_bits_);
   ESP_LOGCONFIG(TAG, "  Frame gap: %" PRIu32 " us", this->frame_gap_us_);
   ESP_LOGCONFIG(TAG, "  Glitch filter: %" PRIu32 " us", this->store_.glitch_us);
   ESP_LOGCONFIG(TAG, "  Status timeout: %" PRIu32 " ms", this->status_timeout_ms_);
@@ -193,6 +175,7 @@ void ParksideBus::dump_config() {
   LOG_TEXT_SENSOR("  ", "Frame us", this->frame_us_ts_);
   LOG_TEXT_SENSOR("  ", "Status", this->status_ts_);
   LOG_SENSOR("  ", "Frame interval", this->frame_interval_s_);
+  LOG_SENSOR("  ", "Measured bit time", this->bit_time_s_);
 }
 
 }  // namespace parkside_bus

@@ -25,10 +25,12 @@ wifi:
 
 # ---------------------------------------------------------------------------
 # Linia CS ("ID" w ładowarce) - dane z baterii do ładowarki.
-# Ramka: 40 bitów po 1 ms, MSB first, bajt 0 = 0x00, potem ~200 ms ciszy.
-#   00 88 33 44 77  -> żądanie ładowania (bateria 2 Ah, np. PAP 20 A1)
-#   00 88 CC 44 77  -> żądanie ładowania (PAPS 204 A1)
-#   00 88 xx 22 CF  -> naładowana
+# Ramka: 40 bitów NRZ, MSB first, bajt 0 = 0x00, potem ~203 bity ciszy.
+# Bit ~1 ms, ale zależnie od baterii 0,96-1,005 ms (auto_bit_time to dopasowuje).
+#   00 88 33 44 77  -> żądanie ładowania, 2 Ah (PAP 20 A1, PAP 20 B1)
+#   00 88 CC 44 77  -> żądanie ładowania, 4 Ah (PAPS 204 A1)
+#   00 88 xx 22 CF  -> pełna, ładowarka przerywa ładowanie
+#   00 88 CC 11 C3 / 06 3C -> uszkodzona PAP 20 B3 (status unknown_frame)
 #
 # Podłączenie:
 #   bateria P-  -> GND ESP i GND konwertera
@@ -42,7 +44,8 @@ parkside_bus:
       mode:
         input: true
         pullup: false      # pull-up daje konwerter
-    bit_time: 1ms
+    bit_time: 1ms          # wartość nominalna
+    auto_bit_time: true    # dopasowanie do zegara baterii, pamiętane między ramkami
     frame_bits: 40
     frame_gap: 100ms
     glitch_filter: 200us
@@ -58,14 +61,18 @@ parkside_bus:
       name: "CS okres ramek"
       filters:
         - throttle_average: 10s
+    measured_bit_time:
+      name: "CS czas bitu"
+      filters:
+        - throttle_average: 10s
     on_frame:
       - lambda: |-
-          // x: std::vector<uint8_t>, 5 bajtów. Bajt 2 różni się między bateriami
-          // (0x33 vs 0xCC), bajty 3-4 to stan (44 77 = ładuj, 22 CF = pełna).
+          // x: std::vector<uint8_t>, 5 bajtów. Bajt 2: 0x33 = 2 Ah, 0xCC = 4 Ah,
+          // bajty 3-4 to stan (44 77 = ładuj, 22 CF = pełna).
           static uint8_t last_b2 = 0;
           if (x[2] != last_b2) {
             last_b2 = x[2];
-            ESP_LOGI("cs", "Bajt 2 (typ baterii?) = 0x%02X", x[2]);
+            ESP_LOGI("cs", "Bajt 2 (klasa baterii) = 0x%02X", x[2]);
           }
 
 # ---------------------------------------------------------------------------
