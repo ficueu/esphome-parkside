@@ -30,7 +30,8 @@ wifi:
 #   00 88 33 44 77  -> żądanie ładowania, 2 Ah (PAP 20 A1, PAP 20 B1)
 #   00 88 CC 44 77  -> żądanie ładowania, 4 Ah (PAPS 204 A1)
 #   00 88 xx 22 CF  -> pełna, ładowarka przerywa ładowanie
-#   00 88 CC 11 C3 / 06 3C -> uszkodzona PAP 20 B3 (status unknown_frame)
+#   00 88 xx 06 3C  -> ogniwo poniżej ~3,0 V (status cell_undervoltage)
+#   00 88 CC 11 C3  -> nieznane, uszkodzona PAP 20 B3 po wybudzeniu
 #
 # Podłączenie:
 #   bateria P-  -> GND ESP i GND konwertera

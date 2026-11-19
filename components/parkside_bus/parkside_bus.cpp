@@ -14,6 +14,7 @@ static const char *const TAG = "parkside_bus";
 
 static const char *const STATUS_CHARGE_REQUEST = "charge_request";  // ... 44 77
 static const char *const STATUS_CHARGE_DONE = "charge_done";        // ... 22 CF
+static const char *const STATUS_CELL_UV = "cell_undervoltage";      // ... 06 3C, ogniwo < ~3,0 V
 static const char *const STATUS_UNKNOWN = "unknown_frame";          // poprawna ramka, nieznana treść
 static const char *const STATUS_INVALID = "invalid_frame";          // nie da się zdekodować
 static const char *const STATUS_IDLE_HIGH = "idle_high";            // linia w górze, brak ramek -> MCU milczy
@@ -158,11 +159,14 @@ void ParksideBus::process_frame_(const uint32_t *edges, uint8_t count, bool over
   }
 
   // Znane ramki (bajt 2 = 0x33 dla 2 Ah, 0xCC dla 4 Ah; nie wpływa na status).
-  // 44 77 = bateria chce ładowania, 22 CF = pełna, ładowarka przerywa.
+  // 44 77 = bateria chce ładowania, 22 CF = pełna, ładowarka przerywa,
+  // 06 3C = co najmniej jedno ogniwo poniżej ~3,0 V (pomiar na PAP 20 B1).
   if (bytes.size() >= 5 && bytes[3] == 0x44 && bytes[4] == 0x77) {
     this->set_status_(STATUS_CHARGE_REQUEST);
   } else if (bytes.size() >= 5 && bytes[3] == 0x22 && bytes[4] == 0xCF) {
     this->set_status_(STATUS_CHARGE_DONE);
+  } else if (bytes.size() >= 5 && bytes[3] == 0x06 && bytes[4] == 0x3C) {
+    this->set_status_(STATUS_CELL_UV);
   } else {
     this->set_status_(STATUS_UNKNOWN);
   }
