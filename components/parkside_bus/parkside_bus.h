@@ -46,6 +46,7 @@ class ParksideBus : public Component {
   void set_auto_bit_time(bool en) { this->auto_bit_time_ = en; }
 
   void set_frame_text_sensor(text_sensor::TextSensor *s) { this->frame_ts_ = s; }
+  void set_frame_binary_text_sensor(text_sensor::TextSensor *s) { this->frame_binary_ts_ = s; }
   void set_frame_us_text_sensor(text_sensor::TextSensor *s) { this->frame_us_ts_ = s; }
   void set_status_text_sensor(text_sensor::TextSensor *s) { this->status_ts_ = s; }
   void set_frame_interval_sensor(sensor::Sensor *s) { this->frame_interval_s_ = s; }
@@ -75,6 +76,7 @@ class ParksideBus : public Component {
   std::string last_frame_str_;
 
   text_sensor::TextSensor *frame_ts_{nullptr};
+  text_sensor::TextSensor *frame_binary_ts_{nullptr};
   text_sensor::TextSensor *frame_us_ts_{nullptr};
   text_sensor::TextSensor *status_ts_{nullptr};
   sensor::Sensor *frame_interval_s_{nullptr};

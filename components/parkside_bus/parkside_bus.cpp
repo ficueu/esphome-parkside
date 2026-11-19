@@ -77,15 +77,20 @@ void ParksideBus::process_frame_(const uint32_t *edges, uint8_t count, bool over
   // Odcinki (us) między zboczami: naprzemiennie dół/góra, zaczynając od dołu.
   uint32_t runs[MAX_EDGES];
   const uint8_t nruns = count - 1;
-  std::string us_str;
-  char buf[12];
-  for (uint8_t i = 0; i < nruns; i++) {
+  for (uint8_t i = 0; i < nruns; i++)
     runs[i] = edges[i + 1] - edges[i];
-    if (i > 0)
-      us_str += ',';
-    snprintf(buf, sizeof(buf), "%" PRIu32, runs[i]);
-    us_str += buf;
-  }
+
+  // Surowe czasy w us tylko na żądanie: niepoprawna ramka, sensor frame_us albo log VERBOSE.
+  auto runs_str = [&]() {
+    std::string s;
+    char b[12];
+    for (uint8_t i = 0; i < nruns; i++) {
+      snprintf(b, sizeof(b), i ? ",%" PRIu32 : "%" PRIu32, runs[i]);
+      s += b;
+    }
+    return s;
+  };
+  char buf[12];
 
   const DecodeResult res = decode_frame(runs, nruns, this->bit_time_est_us_, this->bit_time_us_, this->frame_bits_,
                                         this->auto_bit_time_);
@@ -100,11 +105,16 @@ void ParksideBus::process_frame_(const uint32_t *edges, uint8_t count, bool over
 
   std::vector<uint8_t> bytes;
   std::string hex;
+  std::string bin;  // bajty rozbite na bity, MSB first, np. "00000000 10001000 ..."
   if (valid) {
     bytes.assign(res.bytes, res.bytes + res.nbytes);
     for (uint8_t j = 0; j < res.nbytes; j++) {
       snprintf(buf, sizeof(buf), j ? " %02X" : "%02X", res.bytes[j]);
       hex += buf;
+      if (j)
+        bin += ' ';
+      for (int8_t k = 7; k >= 0; k--)
+        bin += (res.bytes[j] >> k) & 1 ? '1' : '0';
     }
   }
 
@@ -119,15 +129,19 @@ void ParksideBus::process_frame_(const uint32_t *edges, uint8_t count, bool over
     this->frame_interval_s_->publish_state(interval_ms);
 
   if (!valid) {
-    ESP_LOGW(TAG, "Niepoprawna ramka (%s), %u zboczy, us: [%s]", reason, count, us_str.c_str());
+    // Bez bajtów jedyną informacją są czasy odcinków, więc tu zostają.
+    const std::string us = runs_str();
+    ESP_LOGW(TAG, "Niepoprawna ramka (%s), %u zboczy, us: [%s]", reason, count, us.c_str());
     if (this->frame_us_ts_ != nullptr)
-      this->frame_us_ts_->publish_state(us_str);
+      this->frame_us_ts_->publish_state(us);
     this->set_status_(STATUS_INVALID);
     return;
   }
 
-  ESP_LOGD(TAG, "Ramka [%s] co %.1f ms, bit %.1f us, us: [%s]", hex.c_str(), interval_ms, res.bit_time_us,
-           us_str.c_str());
+  ESP_LOGD(TAG, "Ramka [%s] bity [%s]", hex.c_str(), bin.c_str());
+#if ESPHOME_LOG_LEVEL >= ESPHOME_LOG_LEVEL_VERBOSE
+  ESP_LOGV(TAG, "  co %.1f ms, bit %.1f us, us: [%s]", interval_ms, res.bit_time_us, runs_str().c_str());
+#endif
 
   if (this->bit_time_s_ != nullptr)
     this->bit_time_s_->publish_state(res.bit_time_us);
@@ -137,8 +151,10 @@ void ParksideBus::process_frame_(const uint32_t *edges, uint8_t count, bool over
     this->last_frame_str_ = hex;
     if (this->frame_ts_ != nullptr)
       this->frame_ts_->publish_state(hex);
+    if (this->frame_binary_ts_ != nullptr)
+      this->frame_binary_ts_->publish_state(bin);
     if (this->frame_us_ts_ != nullptr)
-      this->frame_us_ts_->publish_state(us_str);
+      this->frame_us_ts_->publish_state(runs_str());
   }
 
   // Znane ramki (bajt 2 = 0x33 dla 2 Ah, 0xCC dla 4 Ah; nie wpływa na status).
@@ -172,6 +188,7 @@ void ParksideBus::dump_config() {
   ESP_LOGCONFIG(TAG, "  Glitch filter: %" PRIu32 " us", this->store_.glitch_us);
   ESP_LOGCONFIG(TAG, "  Status timeout: %" PRIu32 " ms", this->status_timeout_ms_);
   LOG_TEXT_SENSOR("  ", "Frame", this->frame_ts_);
+  LOG_TEXT_SENSOR("  ", "Frame binary", this->frame_binary_ts_);
   LOG_TEXT_SENSOR("  ", "Frame us", this->frame_us_ts_);
   LOG_TEXT_SENSOR("  ", "Status", this->status_ts_);
   LOG_SENSOR("  ", "Frame interval", this->frame_interval_s_);

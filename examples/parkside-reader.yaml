@@ -12,7 +12,7 @@ external_components:
     components: [parkside_bus]
 
 logger:
-  level: DEBUG             # każda ramka w logu: bajty hex + surowe czasy w us
+  level: DEBUG             # każda ramka w logu: bajty hex + bity (VERBOSE: także czasy w us)
 
 api:
 
@@ -52,9 +52,8 @@ parkside_bus:
     status_timeout: 1s
     frame:
       name: "CS ramka"
-    frame_us:
-      name: "CS ramka us"
-      disabled_by_default: true
+    frame_binary:
+      name: "CS ramka bity"
     status:
       name: "CS status"
     frame_interval:

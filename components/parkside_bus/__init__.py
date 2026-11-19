@@ -24,6 +24,7 @@ CONF_FRAME_BITS = "frame_bits"
 CONF_AUTO_BIT_TIME = "auto_bit_time"
 CONF_MEASURED_BIT_TIME = "measured_bit_time"
 CONF_FRAME = "frame"
+CONF_FRAME_BINARY = "frame_binary"
 CONF_FRAME_US = "frame_us"
 CONF_STATUS = "status"
 CONF_FRAME_INTERVAL = "frame_interval"
@@ -66,6 +67,10 @@ CONFIG_SCHEMA = cv.Schema(
         # długość ramki w bitach (40 = 5 bajtów, MSB first)
         cv.Optional(CONF_FRAME_BITS, default=40): _validate_frame_bits,
         cv.Optional(CONF_FRAME): text_sensor.text_sensor_schema(icon="mdi:code-array"),
+        cv.Optional(CONF_FRAME_BINARY): text_sensor.text_sensor_schema(
+            icon="mdi:numeric-1-box-outline"
+        ),
+        # debug: surowe czasy odcinków w us
         cv.Optional(CONF_FRAME_US): text_sensor.text_sensor_schema(
             icon="mdi:timer-outline"
         ),
@@ -110,6 +115,9 @@ async def to_code(config):
     if CONF_FRAME in config:
         sens = await text_sensor.new_text_sensor(config[CONF_FRAME])
         cg.add(var.set_frame_text_sensor(sens))
+    if CONF_FRAME_BINARY in config:
+        sens = await text_sensor.new_text_sensor(config[CONF_FRAME_BINARY])
+        cg.add(var.set_frame_binary_text_sensor(sens))
     if CONF_FRAME_US in config:
         sens = await text_sensor.new_text_sensor(config[CONF_FRAME_US])
         cg.add(var.set_frame_us_text_sensor(sens))

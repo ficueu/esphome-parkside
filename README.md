@@ -91,7 +91,9 @@ parkside_bus:
     status_timeout: 1s     # brak ramek dłużej -> idle_high / line_low
     frame:                 # text_sensor, ramka hex, publikowana przy zmianie
       name: "CS ramka"
-    frame_us:              # text_sensor, surowe czasy odcinków w us
+    frame_binary:          # text_sensor, bajty rozbite na bity, np. "00000000 10001000 ..."
+      name: "CS ramka bity"
+    frame_us:              # text_sensor (debug), surowe czasy odcinków w us
       name: "CS ramka us"
     status:                # text_sensor
       name: "CS status"
@@ -115,6 +117,15 @@ Wartości `status`:
 | `line_low` | brak ramek, linia ściągnięta na stałe – np. zwarty stopień wyjściowy |
 
 `idle_high` / `line_low` przydają się przy diagnozie uszkodzonej baterii.
+
+Log na poziomie `DEBUG` pokazuje każdą ramkę jako bajty i bity:
+
+```
+[D][parkside_bus]: Ramka [00 88 33 44 77] bity [00000000 10001000 00110011 01000100 01110111]
+```
+
+Na poziomie `VERBOSE` dochodzi okres ramek, zmierzony czas bitu i surowe czasy odcinków w µs.
+Niepoprawne ramki (`invalid_frame`) zawsze są logowane z czasami w µs, bo bez bajtów to jedyna informacja.
 
 Kolejne instancje (`MULTI_CONF`) pozwalają podglądać kilka linii naraz.
 
