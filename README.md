@@ -60,6 +60,8 @@ Znane ramki:
 | `00 88 33 06 3C` | ogniwo poniżej ok. 3,0 V | PAP 20 B1 2 Ah: ta sama bateria nadaje `44 77`, a po spadku ogniwa 5 poniżej 3 V przechodzi na `06 3C`; inna B1 z ogniwem na 2,5 V nadaje `06 3C` od razu |
 | `00 88 CC 06 3C` | jw. (bateria 4 Ah) | PAP 20 B3 4 Ah z uszkodzonym pomiarem napięć ogniw (wyrwane elementy na PCB), ogniwa w rzeczywistości po ok. 3,66 V |
 | `00 88 CC 11 C3` | nieznane – 2 pierwsze ramki po wybudzeniu, potem `06 3C` | jw. |
+| `00 88 33 09 F0` | temperatura poza zakresem / błąd NTC | PAP 20 B1 2 Ah: 4,7 kΩ równolegle do NTC (BMS widzi ok. 52–57 °C) |
+| `00 88 CC 09 F0` | jw. (bateria 4 Ah) | 4 Ah: NTC zwarty i NTC odłączony dają ten sam kod |
 
 Interpretacja bajtów:
 
@@ -68,12 +70,17 @@ Interpretacja bajtów:
 | 0 | `00` | preambuła |
 | 1 | `88` | stały we wszystkich zebranych ramkach |
 | 2 | `33` / `CC` | klasa baterii: `33` = 2 Ah, `CC` = 4 Ah (potwierdzone na 2+2 bateriach różnych generacji); być może prąd ładowania |
-| 3 | `44`, `22`, `06`, `11` | stan: `44` ładuj, `22` pełna, `06` ogniwo poniżej ~3,0 V, `11` nieznany; `44`/`22`/`11` to jeden bit w półbajcie powtórzonym dwa razy (0100, 0010, 0001), `06` łamie ten schemat |
-| 4 | `77`, `CF`, `C3`, `3C` | zawsze w parze z bajtem 3 (`44↔77`, `22↔CF`, `11↔C3`, `06↔3C`), nie zależy od bajtu 2; nie pasuje do prostej sumy/XOR |
+| 3 | `44`, `22`, `11`, `06`, `09` | stan: `44` ładuj, `22` pełna, `06` ogniwo poniżej ~3,0 V, `09` temperatura / NTC, `11` nieznany. Stany „normalne” to dwa równe półbajty z jednym bitem (0100, 0010, 0001); błędy mają górny półbajt `0` i dolny z dwoma bitami (0110, 1001) – wolne kody tego typu: `03`, `05`, `0A`, `0C` |
+| 4 | `77`, `CF`, `C3`, `3C`, `F0` | zawsze w parze z bajtem 3 (`44↔77`, `22↔CF`, `11↔C3`, `06↔3C`, `09↔F0`), nie zależy od bajtu 2; nie pasuje do prostej sumy/XOR |
 
 Próg `06 3C` (ok. 3,0 V na najsłabszym ogniwie) leży wyżej niż alarm linii T dla narzędzia
 (ok. 13 V na pakiecie, czyli średnio 2,6 V na ogniwo) i dotyczy pojedynczego ogniwa, nie sumy.
-Nie wiadomo jeszcze, czy ładowarka przy `06 3C` odmawia ładowania, czy ładuje małym prądem (pre-charge).
+Po doładowaniu ogniwa do 3,0 V bateria wróciła do `44 77` dopiero po restarcie komunikacji – możliwa histereza
+albo zatrzaśnięcie flagi do uśpienia baterii. Nie wiadomo jeszcze, czy ładowarka przy `06 3C` odmawia ładowania,
+czy ładuje małym prądem (pre-charge).
+
+`09 F0` nie rozróżnia przegrzania, zwarcia ani rozwarcia NTC – wszystkie trzy dają ten sam kod
+(umiarkowanego „za zimno”, np. ok. 0 °C, jeszcze nie sprawdzano).
 
 Jeśli masz inne baterie (8 Ah, 12 Ah, nowa generacja PAP 202/204, inne usterki) – ramki z logu mile widziane w issues.
 
@@ -117,6 +124,7 @@ Wartości `status`:
 | `charge_request` | bajty 3–4 = `44 77` |
 | `charge_done` | bajty 3–4 = `22 CF` (pełna, ładowarka przerywa) |
 | `cell_undervoltage` | bajty 3–4 = `06 3C` (co najmniej jedno ogniwo poniżej ok. 3,0 V) |
+| `temperature_fault` | bajty 3–4 = `09 F0` (temperatura poza zakresem albo błąd NTC) |
 | `unknown_frame` | poprawna ramka, nieznana treść |
 | `invalid_frame` | nie da się zdekodować (nieparzysta liczba zboczy, brak preambuły, za długa) |
 | `idle_high` | brak ramek, linia w górze – MCU baterii milczy |

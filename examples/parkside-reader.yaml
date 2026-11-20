@@ -31,6 +31,7 @@ wifi:
 #   00 88 CC 44 77  -> żądanie ładowania, 4 Ah (PAPS 204 A1)
 #   00 88 xx 22 CF  -> pełna, ładowarka przerywa ładowanie
 #   00 88 xx 06 3C  -> ogniwo poniżej ~3,0 V (status cell_undervoltage)
+#   00 88 xx 09 F0  -> temperatura poza zakresem / błąd NTC (status temperature_fault)
 #   00 88 CC 11 C3  -> nieznane, uszkodzona PAP 20 B3 po wybudzeniu
 #
 # Podłączenie:
